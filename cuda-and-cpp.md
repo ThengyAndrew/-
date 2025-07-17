@@ -169,3 +169,62 @@ int main(int argc,char **argv)
 * 所有线程都可以访问，但**访问慢**
 * 适合存放大数据，比如输入矩阵、输出结果
 
+### 特性与技巧
+
+#### 访存合并
+
+pytorch 的模式:  <mark style="background-color:blue;">**row-major**</mark>
+
+#### 向量化访存 vectorized
+
+| 类型           | 对应位宽    |
+| ------------ | ------- |
+| `float2`     | 64-bit  |
+| `float4`     | 128-bit |
+| `int2`       | 64-bit  |
+| `int4`       | 128-bit |
+| `half2`      | 32-bit  |
+| `__half2`    | 32-bit  |
+| `bfloat162`  | 32-bit  |
+| `bfloat168*` | 128-bit |
+| `char4`      | 32-bit  |
+| `uchar4`     | 32-bit  |
+| `ushort2`    | 32-bit  |
+| 自定义结构体       | 任意      |
+
+示例：
+{% code lineNumbers="true" %}
+```cpp
+__global__ void silu_coalesced_float4_kernel(const float* input, float* output, int rows, int cols) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col4 = blockIdx.x * blockDim.x + threadIdx.x; // col4 是逻辑上的列编号，每个单位对应一个 float4（4 个元素）
+    int col = col4 << 2;
+
+    if (row < rows && col + 3 < cols) {
+        const float4* input_v4 = reinterpret_cast<const float4*>(input); // 通过 reinterpret_cast 把 float* 指针强转为 float4* 指针（每次访问 16 字节）
+        float4 val = input_v4[row * (cols >> 2) + col4]; // 第 row 行、第 col4 个 float4 的偏移量是 row * (cols >> 2) + col4
+
+        val.x = silu(val.x);
+        val.y = silu(val.y);
+        val.z = silu(val.z);
+        val.w = silu(val.w);
+
+        float4* output_v4 = reinterpret_cast<float4*>(output);
+        output_v4[row * (cols >> 2) + col4] = val;
+    }
+}
+```
+{% endcode %}
+
+#### SFU 单元加速
+
+| 函数                 | 描述             |
+| ------------------ | -------------- |
+| `__sinf(x)`        | 快速计算 `sin(x)`  |
+| `__cosf(x)`        | 快速计算 `cos(x)`  |
+| `__expf(x)`        | 快速计算 `exp(x)`  |
+| `__logf(x)`        | 快速计算 `log(x)`  |
+| `__powf(x, y)`     | 快速计算 `x^y`     |
+| `__sqrtf(x)`       | 快速计算 `sqrt(x)` |
+| `__fdividef(a, b)` | 快速除法           |
+
